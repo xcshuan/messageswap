@@ -1,4 +1,4 @@
-module messageswap
+module github.com/xcshuan/messageswap
 
 go 1.12
 

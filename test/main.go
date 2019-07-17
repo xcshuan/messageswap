@@ -71,7 +71,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("Run './test -d /ip4/127.0.0.1/tcp/%d/ipfs/%s' on another console.\n You can replace 127.0.0.1 with public IP as well.\n", *sourcePort, h.ID().Pretty())
+		fmt.Printf("Run './test -d /ip4/127.0.0.1/tcp/%d/ipfs/%s (linux)' \n '.\\test.exe -d /ip4/127.0.0.1/tcp/%d/ipfs/%s (windows)' on another console. \n You can replace 127.0.0.1 with public IP as well.\n", *sourcePort, h.ID().Pretty(), *sourcePort, h.ID().Pretty())
 		fmt.Printf("\nWaiting for incoming connection\n\n")
 		// Hang forever
 		<-make(chan struct{})

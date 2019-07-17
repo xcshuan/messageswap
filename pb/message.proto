@@ -5,38 +5,39 @@ package messageswap.pb;
 import "github.com/gogo/protobuf/gogoproto/gogo.proto";
 // `protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/gogo/protobuf/protobuf --gogo_out=. *.proto`
 message Message {
-	enum MessageType {
-		PUT_VALUE = 0;
-		GET_VALUE = 1;
-		ADD_PROVIDER = 2;
-		GET_PROVIDERS = 3;
-		FIND_NODE = 4;
-		PING = 5;
-		GET_PREFIX= 6;
-		APPEND_VALUE = 7;
-		META_SYNC = 8;
-		User_Init_Req = 9;
-		User_Init_Res = 10;
-		User_NewKP_Req = 11;
-		New_User_Notif = 12;
-		Block_Meta = 13;
-		Delete_Block = 14;
-		Challenge = 15;
-		Proof = 16;
-		Proof_Sync = 17;
-		Repair = 18;
-		Query_Info = 19;
-		Repair_Res = 20;
-		Storage_Sync = 21;
-		MetaInfo = 22;
-		MetaBroadcast = 23;
-	}
+  enum MessageType {
+    PUT_VALUE = 0;
+    GET_VALUE = 1;
+    ADD_PROVIDER = 2;
+    GET_PROVIDERS = 3;
+    FIND_NODE = 4;
+    PING = 5;
+    GET_PREFIX = 6;
+    APPEND_VALUE = 7;
+    META_SYNC = 8;
+    User_Init_Req = 9;
+    User_Init_Res = 10;
+    User_NewKP_Req = 11;
+    New_User_Notif = 12;
+    Block_Meta = 13;
+    Delete_Block = 14;
+    Challenge = 15;
+    Proof = 16;
+    Proof_Sync = 17;
+    Repair = 18;
+    Query_Info = 19;
+    Repair_Res = 20;
+    Storage_Sync = 21;
+    MetaInfo = 22;
+    MetaBroadcast = 23;
+  }
 
   message Key {
-      string ID = 1;
-      repeated bytes arguments = 2;
+    string ID = 1;
+    repeated bytes arguments = 2;
   }
   MessageType type = 1;
-  Key key = 2 [(gogoproto.nullable) = false];
-  repeated bytes value = 3;		
+  Key key = 2 [ (gogoproto.nullable) = false ];
+  repeated bytes value = 3;
+  string timestamp = 4;
 }

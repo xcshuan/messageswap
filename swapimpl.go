@@ -2,13 +2,14 @@ package messageswap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	logging "github.com/ipfs/go-log"
 	peer "github.com/libp2p/go-libp2p-core/peer"
-	pstore "github.com/libp2p/go-libp2p-core/peerstore"
+	"github.com/libp2p/go-libp2p-core/peerstore"
 	host "github.com/libp2p/go-libp2p-host"
 	protocol "github.com/libp2p/go-libp2p-protocol"
 	"github.com/multiformats/go-multiaddr"
@@ -31,20 +32,23 @@ var sendMessageTimeout = time.Minute * 10
 type SwapImpl struct {
 	self      peer.ID
 	Host      host.Host
-	peerstore pstore.Peerstore // Peer Registry
-	smlk      sync.Mutex
-	context   context.Context
+	peerstore peerstore.Peerstore // Peer Registry
+
+	smlk    sync.Mutex
+	strmap  map[peer.ID]*messageSender //用于stream复用
+	context context.Context
 }
 
 //New 新建一个消息发送网络的功能
 func New(host host.Host) (Metaswap, error) {
 	if host == nil {
-		return nil, ErrReadTimeout
+		return nil, errors.New("Host is nil")
 	}
 	messageNetwork := SwapImpl{
 		Host:      host,
 		self:      host.ID(),
 		peerstore: host.Peerstore(),
+		strmap:    make(map[peer.ID]*messageSender),
 	}
 	host.SetStreamHandler(protocolMessageswapOne, messageNetwork.handleNewStream)
 	return &messageNetwork, nil
@@ -67,29 +71,21 @@ func (msnet *SwapImpl) SendRequest(ctx context.Context, pmes *pb.Message, peerID
 }
 
 func (msnet *SwapImpl) AddAddrToPeerstore(addr string) (peer.ID, error) {
-	ipfsaddr, err := multiaddr.NewMultiaddr(addr)
-	fmt.Println("AddAddrToPeerstore", ipfsaddr.String())
-	if err != nil {
-		return peer.ID(""), err
-	}
-	pid, err := ipfsaddr.ValueForProtocol(multiaddr.P_IPFS)
-	fmt.Println("AddAddrToPeerstore", pid)
+	// Turn the destination into a multiaddr.
+	maddr, err := multiaddr.NewMultiaddr(addr)
 	if err != nil {
 		return peer.ID(""), err
 	}
 
-	peerID, err := peer.IDB58Decode(pid)
+	// Extract the peer ID from the multiaddr.
+	info, err := peer.AddrInfoFromP2pAddr(maddr)
 	if err != nil {
 		return peer.ID(""), err
 	}
 
-	// Decapsulate the /ipfs/<peerID> part from the target
-	// /ip4/<a.b.c.d>/ipfs/<peer> becomes /ip4/<a.b.c.d>
-	targetPeerAddr, _ := multiaddr.NewMultiaddr(
-		fmt.Sprintf("/ipfs/%s", peer.IDB58Encode(peerID)))
-	fmt.Println("AddAddrToPeerstore", targetPeerAddr.String())
-	targetAddr := ipfsaddr.Decapsulate(targetPeerAddr)
-	fmt.Println("AddAddrToPeerstore", targetAddr.String())
-	msnet.Host.Peerstore().AddAddr(peerID, targetAddr, pstore.PermanentAddrTTL)
-	return peerID, nil
+	// Add the destination's peer multiaddress in the peerstore.
+	// This will be used during connection and stream creation by libp2p.
+	msnet.Host.Peerstore().AddAddrs(info.ID, info.Addrs, peerstore.PermanentAddrTTL)
+
+	return info.ID, nil
 }

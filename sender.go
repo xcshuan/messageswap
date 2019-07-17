@@ -3,13 +3,13 @@ package messageswap
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
 	ggio "github.com/gogo/protobuf/io"
 	"github.com/libp2p/go-libp2p-core/helpers"
-	host "github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
 	peer "github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-msgio"
@@ -46,48 +46,98 @@ type bufferedDelimitedWriter struct {
 	ggio.WriteCloser
 }
 
-type bufferedWriteCloser interface {
-	ggio.WriteCloser
-	Flush() error
-}
-
 type messageSender struct {
-	s        network.Stream
-	r        msgio.ReadCloser
-	lk       sync.Mutex
-	p        peer.ID
-	host     host.Host
-	metaswap *SwapImpl
-	// invalid   bool
+	s         network.Stream
+	r         msgio.ReadCloser
+	lk        sync.Mutex
+	p         peer.ID
+	metaswap  *SwapImpl
+	invalid   bool
 	singleMes int
 }
 
 func (msnet *SwapImpl) NewMessageSender(ctx context.Context, p peer.ID) (*messageSender, error) {
-	return &messageSender{
-		host:     msnet.Host,
-		p:        p,
-		metaswap: msnet,
-	}, nil
+	msnet.smlk.Lock()
+	ms, ok := msnet.strmap[p]
+	if ok {
+		msnet.smlk.Unlock()
+		return ms, nil
+	}
+	ms = &messageSender{p: p, metaswap: msnet}
+	msnet.strmap[p] = ms
+	msnet.smlk.Unlock()
+
+	if err := ms.prepOrInvalidate(ctx); err != nil {
+		msnet.smlk.Lock()
+		defer msnet.smlk.Unlock()
+
+		if msCur, ok := msnet.strmap[p]; ok {
+			// Changed. Use the new one, old one is invalid and
+			// not in the map so we can just throw it away.
+			if ms != msCur {
+				return msCur, nil
+			}
+			// Not changed, remove the now invalid stream from the
+			// map.
+			delete(msnet.strmap, p)
+		}
+		// Invalid but not in map. Must have been removed by a disconnect.
+		return nil, err
+	}
+	// All ready to go.
+	return ms, nil
 }
 
-func (s *messageSender) Close() error {
-	return helpers.FullClose(s.s)
+func (ms *messageSender) Close() error {
+	return helpers.FullClose(ms.s)
 }
 
-func (s *messageSender) Reset() error {
-	return s.s.Reset()
+func (ms *messageSender) Reset() error {
+	return ms.s.Reset()
+}
+
+func (ms *messageSender) prep(ctx context.Context) error {
+	if ms.invalid {
+		return fmt.Errorf("message sender has been invalidated")
+	}
+	if ms.s != nil {
+		return nil
+	}
+
+	nstr, err := ms.metaswap.Host.NewStream(ctx, ms.p, protocolMessageswapOne)
+	if err != nil {
+		return err
+	}
+
+	ms.r = msgio.NewVarintReaderSize(nstr, network.MessageSizeMax)
+	ms.s = nstr
+
+	return nil
+}
+
+func (ms *messageSender) prepOrInvalidate(ctx context.Context) error {
+	ms.lk.Lock()
+	defer ms.lk.Unlock()
+	if err := ms.prep(ctx); err != nil {
+		ms.invalidate()
+		return err
+	}
+	return nil
+}
+
+// invalidate is called before this messageSender is removed from the strmap.
+// It prevents the messageSender from being reused/reinitialized and then
+// forgotten (leaving the stream open).
+func (ms *messageSender) invalidate() {
+	ms.invalid = true
+	if ms.s != nil {
+		ms.s.Reset()
+		ms.s = nil
+	}
 }
 
 func (msnet *SwapImpl) newStreamToPeer(ctx context.Context, p peer.ID) (network.Stream, error) {
 	return msnet.Host.NewStream(ctx, p, protocolMessageswapOne)
-}
-
-func newBufferedDelimitedWriter(str io.Writer) bufferedWriteCloser {
-	w := bufio.NewWriter(str)
-	return &bufferedDelimitedWriter{
-		Writer:      w,
-		WriteCloser: ggio.NewDelimitedWriter(w),
-	}
 }
 
 func (w *bufferedDelimitedWriter) Flush() error {
@@ -99,16 +149,9 @@ func (ms *messageSender) SendMessage(ctx context.Context, pmes *pb.Message) erro
 	defer ms.lk.Unlock()
 	retry := false
 	for {
-		if ms.s != nil {
-			return nil
-		}
-		nstr, err := ms.host.NewStream(ctx, ms.p, protocolMessageswapOne)
-		if err != nil {
+		if err := ms.prep(ctx); err != nil {
 			return err
 		}
-
-		ms.r = msgio.NewVarintReaderSize(nstr, network.MessageSizeMax)
-		ms.s = nstr
 
 		if err := ms.writeMsg(pmes); err != nil {
 			ms.s.Reset()
@@ -141,16 +184,9 @@ func (ms *messageSender) SendRequest(ctx context.Context, pmes *pb.Message) (*pb
 	defer ms.lk.Unlock()
 	retry := false
 	for {
-		if ms.s != nil {
-			return nil, nil
-		}
-		nstr, err := ms.host.NewStream(ctx, ms.p, protocolMessageswapOne)
-		if err != nil {
+		if err := ms.prep(ctx); err != nil {
 			return nil, err
 		}
-
-		ms.r = msgio.NewVarintReaderSize(nstr, network.MessageSizeMax)
-		ms.s = nstr
 
 		if err := ms.writeMsg(pmes); err != nil {
 			ms.s.Reset()
